@@ -274,9 +274,9 @@ export default function Reports() {
               variant="outlined"
             />
             <Chip
-              label={`Net: ${currency} ${
-                stats.income.toFixed(2) - stats.expense.toFixed(2)
-              }`}
+              label={`Net: ${currency} ${(stats.income - stats.expense).toFixed(
+                2
+              )}`}
               color="primary"
             />
           </Stack>
