@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useCurrency } from "@/lib/CurrencyContext";
+import TaskAltIcon from "@mui/icons-material/TaskAlt";
 import {
   Grid,
   Paper,
@@ -301,7 +302,9 @@ export default function Dashboard() {
         </Grid>
 
         <Grid item xs={12} sm={6} md={3}>
-          <Card sx={{ borderRadius: 4, bgcolor: "#fff3e0", height: "100%" }}>
+          <Card sx={{ borderRadius: 4, bgcolor: "#e0f2f1", height: "100%" }}>
+            {" "}
+            {/* Teal Background */}
             <CardContent>
               <Stack
                 direction="row"
@@ -314,18 +317,20 @@ export default function Dashboard() {
                     variant="subtitle2"
                     fontWeight="bold"
                   >
-                    ACTIVE LOANS
+                    TOTAL SETTLED
                   </Typography>
                   <Typography
                     variant="h5"
                     fontWeight="bold"
-                    sx={{ mt: 1, color: "#ef6c00" }}
+                    sx={{ mt: 1, color: "#00695c" }}
                   >
-                    {currency} {stats.loan.toLocaleString()}
+                    {currency}
+                    {stats.settlement.toLocaleString()}
                   </Typography>
                 </Box>
-                <Box sx={{ p: 1, bgcolor: "#ffe0b2", borderRadius: "50%" }}>
-                  <AccountBalanceWalletIcon sx={{ color: "#ef6c00" }} />
+                <Box sx={{ p: 1, bgcolor: "#b2dfdb", borderRadius: "50%" }}>
+                  {/* Icon changed to Handshake/Check to represent settlement */}
+                  <TaskAltIcon sx={{ color: "#00695c" }} />
                 </Box>
               </Stack>
             </CardContent>

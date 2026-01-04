@@ -295,6 +295,7 @@ export default function RootLayout({ children }) {
                   mt: 8, // Push down below AppBar
                   // overflowX: "hidden", // PREVENTS HORIZONTAL SCROLL
                   minWidth: 0, // Allows charts/tables to shrink properly
+                  minHeight: "100vh", // Ensures full height
                   display: "flex", // Ensures vertical stacking
                   flexDirection: "column",
                 }}
@@ -324,6 +325,26 @@ export default function RootLayout({ children }) {
                 ) : (
                   children
                 )}
+                {/* --- WEBSITE FOOTER START --- */}
+                <Box
+                  component="footer"
+                  sx={{
+                    py: 3,
+                    px: 2,
+                    mt: "auto",
+                    textAlign: "center",
+                    bgcolor: "transparent",
+                  }}
+                >
+                  <Typography variant="body2" color="text.secondary">
+                    © {new Date().getFullYear()} Finance Tracker. All rights
+                    reserved.
+                  </Typography>
+                  <Typography variant="caption" color="text.disabled">
+                    Build v1.0 • Designed for Personal Finance
+                  </Typography>
+                </Box>
+                {/* --- WEBSITE FOOTER END --- */}
               </Box>
             </Box>
           </CurrencyProvider>

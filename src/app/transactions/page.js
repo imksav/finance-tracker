@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react"; // Added useRef
 import { supabase } from "@/lib/supabase";
 import { useCurrency } from "@/lib/CurrencyContext";
 import {
@@ -20,26 +20,30 @@ import {
   useMediaQuery,
   CircularProgress,
   Container,
+  Alert, // Added Alert
 } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
-import AttachMoneyIcon from "@mui/icons-material/AttachMoney"; // Or Currency icon
+import AttachMoneyIcon from "@mui/icons-material/AttachMoney";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import FileUploadIcon from "@mui/icons-material/FileUpload"; // New Icon
 import AddCircleIcon from "@mui/icons-material/AddCircle";
 import * as XLSX from "xlsx";
-import { format } from "date-fns"; // Standard date formatting
+import { format } from "date-fns";
 
 export default function Transactions() {
+  const { currency } = useCurrency();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
-  const { currency } = useCurrency();
+  const fileInputRef = useRef(null); // Reference for hidden file input
 
   const [transactions, setTransactions] = useState([]);
-  const [cats1, setCats1] = useState([]);
-  const [cats2, setCats2] = useState([]);
+  const [cats1, setCats1] = useState([]); // Types (Income/Expense)
+  const [cats2, setCats2] = useState([]); // Categories (Rent/Food)
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
+  const [importMsg, setImportMsg] = useState(null); // Feedback for import
 
   // Form State
   const [form, setForm] = useState({
@@ -74,9 +78,9 @@ export default function Transactions() {
       `
       )
       .order("date", { ascending: false })
-      .order("created_at", { ascending: false }); // Secondary sort for same-day entries
+      .order("created_at", { ascending: false });
 
-    if (!error) setTransactions(transData);
+    if (!error) setTransactions(transData || []);
     setFetching(false);
   };
 
@@ -97,7 +101,7 @@ export default function Transactions() {
     if (error) {
       alert(error.message);
     } else {
-      setForm({ ...form, amount: "", note: "" }); // Keep date/categories for faster entry
+      setForm({ ...form, amount: "", note: "" });
       fetchData();
     }
     setLoading(false);
@@ -124,18 +128,121 @@ export default function Transactions() {
     XLSX.writeFile(wb, "finance_data.xlsx");
   };
 
-  // Helper to choose icon/color based on type
+  // ----------------------------------------------------------------
+  // IMPORT LOGIC START
+  // ----------------------------------------------------------------
+  const handleImportClick = () => {
+    fileInputRef.current.click();
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: "binary" });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws); // Convert to JSON
+
+        if (data.length === 0) {
+          setImportMsg({ type: "error", text: "File is empty." });
+          return;
+        }
+
+        // Prepare Bulk Insert Array
+        const newTransactions = [];
+        let skipped = 0;
+
+        // Create Helper Maps for fast ID lookup (Name -> ID)
+        // e.g. { "Income": "uuid-1", "Expense": "uuid-2" }
+        const typeMap = {};
+        cats1.forEach((c) => (typeMap[c.name.toLowerCase()] = c.id));
+
+        const catMap = {};
+        cats2.forEach((c) => (catMap[c.name.toLowerCase()] = c.id));
+
+        // Loop through Excel rows
+        for (const row of data) {
+          // Excel Column Names matching: Date, Amount, Type, Category, Note
+          // We lowercase keys to be safe
+          const rDate = row["Date"] || row["date"];
+          const rAmount = row["Amount"] || row["amount"];
+          const rType = row["Type"] || row["type"]; // e.g. "Expense"
+          const rCat = row["Category"] || row["category"]; // e.g. "Groceries"
+          const rNote = row["Note"] || row["note"] || "";
+
+          if (!rDate || !rAmount || !rType || !rCat) {
+            skipped++;
+            continue; // Skip invalid rows
+          }
+
+          // Find IDs
+          const typeId = typeMap[rType.toString().trim().toLowerCase()];
+          const catId = catMap[rCat.toString().trim().toLowerCase()];
+
+          if (typeId && catId) {
+            // Handle Excel Date format if necessary (Excel sometimes returns numbers)
+            let finalDate = rDate;
+            if (typeof rDate === "number") {
+              // Convert Excel serial date to JS Date
+              const d = new Date(Math.round((rDate - 25569) * 86400 * 1000));
+              finalDate = d.toISOString().split("T")[0];
+            }
+
+            newTransactions.push({
+              date: finalDate,
+              amount: rAmount,
+              category1_id: typeId,
+              category2_id: catId,
+              note: rNote,
+            });
+          } else {
+            skipped++; // Skip if category names don't match database
+          }
+        }
+
+        if (newTransactions.length > 0) {
+          const { error } = await supabase
+            .from("transactions")
+            .insert(newTransactions);
+          if (error) throw error;
+          setImportMsg({
+            type: "success",
+            text: `Imported ${newTransactions.length} transactions! (${skipped} skipped)`,
+          });
+          fetchData(); // Refresh list
+        } else {
+          setImportMsg({
+            type: "warning",
+            text: `No matching categories found. Check your spelling. (${skipped} rows skipped)`,
+          });
+        }
+      } catch (error) {
+        console.error(error);
+        setImportMsg({
+          type: "error",
+          text: "Import failed: " + error.message,
+        });
+      }
+
+      // Reset input so same file can be selected again if needed
+      e.target.value = "";
+    };
+    reader.readAsBinaryString(file);
+  };
+  // ----------------------------------------------------------------
+  // IMPORT LOGIC END
+  // ----------------------------------------------------------------
+
   const getTypeStyles = (typeName) => {
     if (typeName === "Income")
       return { color: "success.main", icon: <TrendingUpIcon />, bg: "#e8f5e9" };
     if (typeName === "Expense")
       return { color: "error.main", icon: <TrendingDownIcon />, bg: "#ffebee" };
-    if (typeName === "Loan")
-      return {
-        color: "warning.main",
-        icon: <AttachMoneyIcon />,
-        bg: "#fff3e0",
-      };
     return {
       color: "text.secondary",
       icon: <AttachMoneyIcon />,
@@ -156,17 +263,48 @@ export default function Transactions() {
           <Typography variant="h5" fontWeight="bold">
             Transactions
           </Typography>
-          <Button
-            variant="outlined"
-            startIcon={<FileDownloadIcon />}
-            onClick={exportToExcel}
-            size="small"
-          >
-            Export
-          </Button>
+          <Stack direction="row" spacing={1}>
+            {/* Hidden Input */}
+            <input
+              type="file"
+              accept=".xlsx, .xls, .csv"
+              ref={fileInputRef}
+              style={{ display: "none" }}
+              onChange={handleFileChange}
+            />
+            {/* Import Button */}
+            <Button
+              variant="outlined"
+              startIcon={<FileUploadIcon />}
+              onClick={handleImportClick}
+              size="small"
+            >
+              Import
+            </Button>
+            {/* Export Button */}
+            <Button
+              variant="outlined"
+              startIcon={<FileDownloadIcon />}
+              onClick={exportToExcel}
+              size="small"
+            >
+              Export
+            </Button>
+          </Stack>
         </Stack>
 
-        {/* 1. Add Transaction Form (Card Style) */}
+        {/* Import Message Feedback */}
+        {importMsg && (
+          <Alert
+            severity={importMsg.type}
+            onClose={() => setImportMsg(null)}
+            sx={{ mb: 2 }}
+          >
+            {importMsg.text}
+          </Alert>
+        )}
+
+        {/* Add Form */}
         <Paper elevation={3} sx={{ p: 3, mb: 4, borderRadius: 3 }}>
           <Typography
             variant="subtitle1"
@@ -180,7 +318,6 @@ export default function Transactions() {
           </Typography>
           <form onSubmit={handleSubmit}>
             <Stack spacing={2}>
-              {/* Row 1: Amount & Date */}
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                 <TextField
                   label="Amount"
@@ -205,8 +342,6 @@ export default function Transactions() {
                   onChange={(e) => setForm({ ...form, date: e.target.value })}
                 />
               </Stack>
-
-              {/* Row 2: Categories */}
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                 <TextField
                   select
@@ -237,8 +372,6 @@ export default function Transactions() {
                   ))}
                 </TextField>
               </Stack>
-
-              {/* Row 3: Note & Button */}
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                 <TextField
                   label="Note"
@@ -265,7 +398,7 @@ export default function Transactions() {
           </form>
         </Paper>
 
-        {/* 2. Transaction List (Scrollable Card View) */}
+        {/* Transaction List */}
         <Typography variant="h6" sx={{ mb: 2, opacity: 0.8 }}>
           History
         </Typography>
@@ -276,11 +409,8 @@ export default function Transactions() {
           </Box>
         ) : (
           <Stack spacing={2} sx={{ pb: 10 }}>
-            {" "}
-            {/* pb:10 gives space at bottom for scrolling */}
             {transactions.map((t) => {
               const styles = getTypeStyles(t.category1?.name);
-
               return (
                 <Card
                   key={t.id}
@@ -301,7 +431,6 @@ export default function Transactions() {
                       justifyContent: "space-between",
                     }}
                   >
-                    {/* Left: Icon & Info */}
                     <Box display="flex" alignItems="center" gap={2}>
                       <Box
                         sx={{
@@ -326,8 +455,6 @@ export default function Transactions() {
                         </Typography>
                       </Box>
                     </Box>
-
-                    {/* Right: Amount & Delete */}
                     <Box display="flex" alignItems="center" gap={1}>
                       <Box textAlign="right">
                         <Typography
@@ -336,7 +463,8 @@ export default function Transactions() {
                           sx={{ color: styles.color }}
                         >
                           {t.category1?.name === "Expense" ? "-" : "+"}
-                          {currency} {t.amount}
+                          {currency}
+                          {t.amount}
                         </Typography>
                       </Box>
                       <IconButton
@@ -357,9 +485,6 @@ export default function Transactions() {
             {transactions.length === 0 && (
               <Box textAlign="center" py={5} color="text.secondary">
                 <Typography>No transactions found.</Typography>
-                <Typography variant="caption">
-                  Start by adding a new entry above.
-                </Typography>
               </Box>
             )}
           </Stack>
