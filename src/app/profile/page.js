@@ -13,7 +13,9 @@ import {
   Divider,
   Alert,
   Stack,
+  InputAdornment,
 } from "@mui/material";
+import AccountBalanceIcon from "@mui/icons-material/AccountBalance"; // Import Icon
 
 export default function Profile() {
   const { currency, updateCurrency } = useCurrency();
@@ -22,6 +24,7 @@ export default function Profile() {
   // State for forms
   const [passwords, setPasswords] = useState({ new: "", confirm: "" });
   const [selectedCurrency, setSelectedCurrency] = useState(currency);
+  const [initialBalance, setInitialBalance] = useState(""); // <--- NEW STATE
   const [msg, setMsg] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -31,28 +34,50 @@ export default function Profile() {
         data: { user },
       } = await supabase.auth.getUser();
       setUser(user);
+
+      if (user) {
+        // Fetch existing Profile Data (Currency & Balance)
+        const { data } = await supabase
+          .from("profiles")
+          .select("currency, initial_balance")
+          .eq("id", user.id)
+          .single();
+
+        if (data) {
+          // Sync local state with DB
+          if (data.currency) setSelectedCurrency(data.currency);
+          if (data.initial_balance) setInitialBalance(data.initial_balance);
+        }
+      }
     };
     getUser();
-    setSelectedCurrency(currency); // Sync with global context on load
-  }, [currency]);
+  }, []);
 
-  // 1. Handle Currency Save
+  // 1. Handle Settings Save (Currency AND Balance)
   const handleSaveSettings = async () => {
     if (!user) return;
+
+    // Validation
     if (!selectedCurrency.trim())
       return setMsg({ type: "error", text: "Currency symbol cannot be empty" });
 
     setLoading(true);
 
-    // Upsert: Create if doesn't exist, Update if it does
-    const { error } = await supabase
-      .from("profiles")
-      .upsert({ id: user.id, currency: selectedCurrency.trim() });
+    // Upsert: Save both Currency and Initial Balance
+    const { error } = await supabase.from("profiles").upsert({
+      id: user.id,
+      currency: selectedCurrency.trim(),
+      initial_balance: parseFloat(initialBalance) || 0,
+      balance_updated_at: new Date().toISOString(),
+    });
 
     if (error) {
       setMsg({ type: "error", text: error.message });
     } else {
-      setMsg({ type: "success", text: "Preferences updated successfully!" });
+      setMsg({
+        type: "success",
+        text: "Profile settings updated successfully!",
+      });
       updateCurrency(selectedCurrency.trim()); // Update app globally
     }
     setLoading(false);
@@ -104,39 +129,61 @@ export default function Profile() {
       )}
 
       {/* ------------------------------------------------ */}
-      {/* CARD 1: Preferences (Currency)                   */}
+      {/* CARD 1: General Settings (Currency & Balance)    */}
       {/* ------------------------------------------------ */}
       <Paper sx={{ p: 3, mb: 4 }}>
         <Typography variant="h6" gutterBottom>
-          Preferences
+          General Settings
         </Typography>
         <Typography variant="body2" color="text.secondary" mb={3}>
-          Set your preferred currency symbol. This will be reflected across your
-          dashboard and transactions.
+          Configure your display preferences and starting bank balance.
         </Typography>
 
-        <Grid container spacing={2} alignItems="center">
+        <Grid container spacing={3}>
+          {/* Currency Field */}
           <Grid item xs={12} sm={6}>
-            {/* CHANGED: Removed 'select' prop, added helperText */}
             <TextField
               label="Currency Symbol"
-              placeholder="e.g. $, £, ₹, Rs, USD"
+              placeholder="e.g. $, £, ₹"
               fullWidth
               variant="outlined"
               value={selectedCurrency}
               onChange={(e) => setSelectedCurrency(e.target.value)}
-              inputProps={{ maxLength: 5 }} // Optional: Limit length to keep UI clean
-              helperText={`${selectedCurrency.length}/5 characters`}
+              inputProps={{ maxLength: 5 }}
+              helperText="Used across all charts"
             />
           </Grid>
+
+          {/* NEW: Initial Bank Balance Field */}
           <Grid item xs={12} sm={6}>
+            <TextField
+              label="Initial Bank Balance"
+              placeholder="0.00"
+              type="number"
+              fullWidth
+              variant="outlined"
+              value={initialBalance}
+              onChange={(e) => setInitialBalance(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <AccountBalanceIcon color="action" />
+                  </InputAdornment>
+                ),
+              }}
+              helperText="Your starting money (before tracking)"
+            />
+          </Grid>
+
+          {/* Save Button */}
+          <Grid item xs={12}>
             <Button
               variant="contained"
               onClick={handleSaveSettings}
-              disabled={loading || !selectedCurrency}
-              sx={{ height: 56 }} // Match input height
+              disabled={loading}
+              sx={{ height: 45, minWidth: 150 }}
             >
-              Save Preferences
+              {loading ? "Saving..." : "Save Changes"}
             </Button>
           </Grid>
         </Grid>

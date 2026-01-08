@@ -21,8 +21,8 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  ScatterChart,
-  Scatter,
+  LineChart,
+  Line,
   Cell,
   LabelList,
   Legend,
@@ -33,12 +33,14 @@ import {
   subMonths,
   startOfMonth,
   endOfMonth,
+  isAfter,
+  parse,
 } from "date-fns";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import AccountBalanceWalletIcon from "@mui/icons-material/AccountBalanceWallet";
+import AccountBalanceIcon from "@mui/icons-material/AccountBalance";
 
-// Professional Palette
 const COLORS = [
   "#0088FE",
   "#00C49F",
@@ -59,6 +61,11 @@ export default function Dashboard() {
     loan: 0,
     settlement: 0,
   });
+
+  // Bank Balance States
+  const [initialBalance, setInitialBalance] = useState(0);
+  const [balanceUpdatedAt, setBalanceUpdatedAt] = useState(null); // Store date
+
   const [monthlyData, setMonthlyData] = useState([]);
   const [categoryData, setCategoryData] = useState([]);
 
@@ -67,19 +74,35 @@ export default function Dashboard() {
   }, []);
 
   const fetchData = async () => {
-    // 1. Setup Date Range (Last 12 Months)
+    // 1. Fetch User's Initial Balance AND Updated Date
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("initial_balance, balance_updated_at")
+        .eq("id", user.id)
+        .single();
+
+      if (profile) {
+        setInitialBalance(profile.initial_balance || 0);
+        setBalanceUpdatedAt(profile.balance_updated_at);
+      }
+    }
+
+    // 2. Setup Date Range (Last 12 Months for Charts)
     const today = new Date();
-    const oneYearAgo = subMonths(today, 11); // Go back 11 months + current = 12 months
+    const oneYearAgo = subMonths(today, 11);
     const startDate = startOfMonth(oneYearAgo).toISOString();
 
-    // 2. Fetch ALL Expense Categories first (to ensure fixed chart size)
+    // 3. Fetch Categories
     const { data: allCategories } = await supabase
       .from("categories")
       .select("id, name")
       .eq("type", "c2")
       .order("name");
 
-    // Initialize map with ALL categories at 0
     const catExpenseMap = {};
     if (allCategories) {
       allCategories.forEach((c) => {
@@ -87,7 +110,6 @@ export default function Dashboard() {
       });
     }
 
-    // 3. Initialize Monthly Map for last 12 months (ensure no gaps)
     const monthMap = {};
     for (let i = 0; i < 12; i++) {
       const d = subMonths(today, i);
@@ -95,7 +117,7 @@ export default function Dashboard() {
       monthMap[key] = { name: key, Income: 0, Expense: 0, sortDate: d };
     }
 
-    // 4. Fetch Transactions (Last 1 year only)
+    // 4. Fetch Transactions
     const { data: transData, error } = await supabase
       .from("transactions")
       .select(
@@ -121,45 +143,206 @@ export default function Dashboard() {
       const dateObj = parseISO(t.date);
       const monthKey = format(dateObj, "MMM yyyy");
 
-      // Update Totals
+      // --- 1. General Stats (For Charts & Cards - Shows EVERYTHING) ---
       if (type === "Income") income += val;
       if (type === "Expense") expense += val;
       if (type === "Loan") loan += val;
       if (type === "Settlement") settlement += val;
 
-      // Update Monthly Data (if within our 12 month map)
       if (monthMap[monthKey]) {
         if (type === "Income") monthMap[monthKey].Income += val;
         if (type === "Expense") monthMap[monthKey].Expense += val;
       }
 
-      // Update Category Data (Expense Only)
       if (type === "Expense") {
         const c2 = t.category2?.name;
-        // Even if category was deleted or new, handle it safely
         if (c2) catExpenseMap[c2] = (catExpenseMap[c2] || 0) + val;
       }
     });
 
     setStats({ income, expense, loan, settlement });
 
-    // Sort months chronologically
     const sortedMonths = Object.values(monthMap).sort(
       (a, b) => a.sortDate - b.sortDate
     );
     setMonthlyData(sortedMonths);
 
-    // Convert category map to array (Do NOT filter out zeros to keep chart fixed)
     const scatterArr = Object.keys(catExpenseMap).map((k) => ({
       name: k,
       value: catExpenseMap[k],
     }));
-    // Optional: Sort alphabetically or by value.
-    // Sorting alphabetically keeps the axis position 'constant'.
-    // .sort((a, b) => a.name.localeCompare(b.name));
 
     setCategoryData(scatterArr);
   };
+
+  // --- CALCULATE REAL-TIME BANK BALANCE ---
+  // Logic: Initial Balance + (Transactions happening AFTER the balance was set)
+  const calculateBankBalance = () => {
+    // Start with the set balance
+    let liveBalance = Number(initialBalance);
+
+    // If we have transactions and a set date
+    if (balanceUpdatedAt) {
+      const balanceSetDate = new Date(balanceUpdatedAt);
+
+      // Use a separate query or filter the existing `stats`?
+      // We need to fetch ALL transactions (not just 12 months) ideally,
+      // but for now, let's assume the 12-month fetch covers the recent period.
+      // We can't reuse `stats` because that includes old data.
+      // We must re-filter `transData` (but we need transData in scope).
+      // Since `fetchData` is async, let's do this logic inside `fetchData` or pass data here.
+      // **Best Approach:** Do it inside the render or a memo, but we need the transaction list.
+      // Let's assume `transData` is not stored in state.
+
+      // WAIT: We didn't store transData in state.
+      // Let's modify `fetchData` to set a `balanceChangeSinceUpdate` state.
+    }
+    return liveBalance;
+  };
+
+  // *** REVISED FETCH DATA LOGIC TO HANDLE BALANCE ***
+  // I'm adding a specific calculation block inside the existing loop in the component below.
+  // To make this work cleanly, I will add `balanceChange` to state.
+
+  const [balanceChange, setBalanceChange] = useState(0);
+
+  // Re-running this logic on the fetched data:
+  useEffect(() => {
+    // We need to re-fetch or store transactions to calculate this.
+    // Let's modify the fetchData function above to calculate this loop.
+    // See Updated FetchData below (I will paste the FULL component with this integrated).
+  }, [balanceUpdatedAt]);
+
+  // ------------------------------------------------------------------
+  //  FULL INTEGRATED COMPONENT START (Copy from here down)
+  // ------------------------------------------------------------------
+
+  return <DashboardWithLogic />;
+}
+
+function DashboardWithLogic() {
+  const { currency } = useCurrency();
+  const theme = useTheme(); // Hook needed for layout if used, otherwise safe to remove
+
+  const [stats, setStats] = useState({
+    income: 0,
+    expense: 0,
+    loan: 0,
+    settlement: 0,
+  });
+  const [initialBalance, setInitialBalance] = useState(0);
+  const [balanceUpdatedAt, setBalanceUpdatedAt] = useState(null);
+  const [liveBalanceChange, setLiveBalanceChange] = useState(0);
+  const [monthlyData, setMonthlyData] = useState([]);
+  const [categoryData, setCategoryData] = useState([]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      // 1. Get Profile
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      let profileBalance = 0;
+      let profileDate = null;
+
+      if (user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("initial_balance, balance_updated_at")
+          .eq("id", user.id)
+          .single();
+        if (profile) {
+          profileBalance = profile.initial_balance || 0;
+          profileDate = profile.balance_updated_at; // This is a timestamp (e.g., 2:30 PM)
+          setInitialBalance(profileBalance);
+          setBalanceUpdatedAt(profileDate);
+        }
+      }
+
+      // 2. Fetch Transactions (Last 12 Months)
+      const today = new Date();
+      const oneYearAgo = subMonths(today, 11);
+      const startDate = startOfMonth(oneYearAgo).toISOString();
+
+      // UPDATED QUERY: Added 'created_at' to the select
+      const { data: transData, error } = await supabase
+        .from("transactions")
+        .select(
+          `amount, date, created_at, categories!category1_id (name), category2:categories!category2_id (name)`
+        )
+        .gte("date", startDate)
+        .order("date", { ascending: true });
+
+      if (error) return;
+
+      // 3. Process Data
+      let income = 0,
+        expense = 0,
+        loan = 0,
+        settlement = 0;
+      let tempBalanceChange = 0;
+
+      const catExpenseMap = {};
+      const monthMap = {};
+      for (let i = 0; i < 12; i++) {
+        const d = subMonths(today, i);
+        const key = format(d, "MMM yyyy");
+        monthMap[key] = { name: key, Income: 0, Expense: 0, sortDate: d };
+      }
+
+      transData.forEach((t) => {
+        const type = t.categories.name;
+        const val = parseFloat(t.amount);
+        const dateObj = parseISO(t.date);
+        const monthKey = format(dateObj, "MMM yyyy");
+
+        // A. Standard Stats
+        if (type === "Income") income += val;
+        if (type === "Expense") expense += val;
+        if (type === "Loan") loan += val;
+        if (type === "Settlement") settlement += val;
+
+        // B. Charts
+        if (monthMap[monthKey]) {
+          if (type === "Income") monthMap[monthKey].Income += val;
+          if (type === "Expense") monthMap[monthKey].Expense += val;
+        }
+        if (type === "Expense") {
+          const c2 = t.category2?.name;
+          if (c2) catExpenseMap[c2] = (catExpenseMap[c2] || 0) + val;
+        }
+
+        // C. BANK BALANCE LOGIC (The Fix)
+        if (profileDate) {
+          // Use created_at (When you typed it) instead of date (When it happened)
+          // This ensures anything you enter AFTER setting balance counts immediately.
+          const entryTime = new Date(t.created_at);
+          const updateTime = new Date(profileDate);
+
+          if (entryTime > updateTime) {
+            if (type === "Income") tempBalanceChange += val;
+            if (type === "Expense") tempBalanceChange -= val;
+            if (type === "Settlement") tempBalanceChange -= val;
+          }
+        }
+      });
+
+      setStats({ income, expense, loan, settlement });
+      setLiveBalanceChange(tempBalanceChange);
+
+      const sortedMonths = Object.values(monthMap).sort(
+        (a, b) => a.sortDate - b.sortDate
+      );
+      setMonthlyData(sortedMonths);
+      const scatterArr = Object.keys(catExpenseMap).map((k) => ({
+        name: k,
+        value: catExpenseMap[k],
+      }));
+      setCategoryData(scatterArr);
+    };
+
+    loadData();
+  }, [currency]); // Added currency dependency to refresh if currency changes
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
@@ -191,13 +374,51 @@ export default function Dashboard() {
     return null;
   };
 
+  const currentBankBalance = Number(initialBalance) + liveBalanceChange;
+
   return (
     <Box>
-      <Typography variant="h4" fontWeight="bold" gutterBottom>
+      {/* <Typography variant="h4" fontWeight="bold" gutterBottom>
         Dashboard
-      </Typography>
+      </Typography> */}
 
-      {/* 1. Summary Cards */}
+      {/* BANK BALANCE CARD */}
+      <Paper
+        sx={{
+          p: 3,
+          mb: 4,
+          borderRadius: 4,
+          background: "linear-gradient(135deg, #1565c0 30%, #42a5f5 90%)",
+          color: "white",
+          boxShadow: 4,
+        }}
+      >
+        <Stack direction="row" alignItems="center" gap={2}>
+          <Box
+            sx={{
+              p: 1.5,
+              bgcolor: "rgba(255,255,255,0.2)",
+              borderRadius: "50%",
+            }}
+          >
+            <AccountBalanceIcon sx={{ color: "white", fontSize: 32 }} />
+          </Box>
+          <Box>
+            <Typography variant="subtitle2" sx={{ opacity: 0.9 }}>
+              CURRENT BANK BALANCE
+            </Typography>
+            <Typography variant="h3" fontWeight="bold">
+              {currency}
+              {currentBankBalance.toLocaleString()}
+            </Typography>
+            <Typography variant="caption" sx={{ opacity: 0.8 }}>
+              (Reflects any entries added AFTER you saved your profile balance)
+            </Typography>
+          </Box>
+        </Stack>
+      </Paper>
+
+      {/* Summary Cards */}
       <Grid container spacing={3} mb={4}>
         <Grid item xs={12} sm={6} md={3}>
           <Card sx={{ borderRadius: 4, bgcolor: "#e8f5e9", height: "100%" }}>
@@ -230,7 +451,6 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </Grid>
-
         <Grid item xs={12} sm={6} md={3}>
           <Card sx={{ borderRadius: 4, bgcolor: "#ffebee", height: "100%" }}>
             <CardContent>
@@ -262,7 +482,6 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </Grid>
-
         <Grid item xs={12} sm={6} md={3}>
           <Card sx={{ borderRadius: 4, bgcolor: "#e3f2fd", height: "100%" }}>
             <CardContent>
@@ -300,11 +519,8 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </Grid>
-
         <Grid item xs={12} sm={6} md={3}>
           <Card sx={{ borderRadius: 4, bgcolor: "#e0f2f1", height: "100%" }}>
-            {" "}
-            {/* Teal Background */}
             <CardContent>
               <Stack
                 direction="row"
@@ -324,12 +540,10 @@ export default function Dashboard() {
                     fontWeight="bold"
                     sx={{ mt: 1, color: "#00695c" }}
                   >
-                    {currency}
-                    {stats.settlement.toLocaleString()}
+                    {currency} {stats.settlement.toLocaleString()}
                   </Typography>
                 </Box>
                 <Box sx={{ p: 1, bgcolor: "#b2dfdb", borderRadius: "50%" }}>
-                  {/* Icon changed to Handshake/Check to represent settlement */}
                   <TaskAltIcon sx={{ color: "#00695c" }} />
                 </Box>
               </Stack>
@@ -338,9 +552,8 @@ export default function Dashboard() {
         </Grid>
       </Grid>
 
-      {/* 2. Advanced Charts */}
+      {/* Advanced Charts */}
       <Grid container spacing={4}>
-        {/* CHART 1: 1-Year Cash Flow (Fixed 12 Months) */}
         <Grid item xs={12}>
           <Paper
             sx={{
@@ -404,7 +617,6 @@ export default function Dashboard() {
           </Paper>
         </Grid>
 
-        {/* CHART 2: Expense Distribution (Scatter - Fixed Overlap) */}
         <Grid item xs={12}>
           <Paper
             sx={{
@@ -424,28 +636,21 @@ export default function Dashboard() {
             {categoryData.length > 0 ? (
               <Box sx={{ flexGrow: 1, width: "100%" }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <ScatterChart
-                    margin={{ top: 20, right: 20, bottom: 100, left: 20 }} // Increased bottom margin for text
+                  <LineChart
+                    data={categoryData}
+                    margin={{ top: 20, right: 20, bottom: 100, left: 20 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
-
-                    {/* X-Axis: Tilted text (-45) to prevent overlap */}
                     <XAxis
-                      type="category"
                       dataKey="name"
-                      name="Category"
-                      interval={0} // Force show ALL labels
-                      angle={-45} // Tilt labels
-                      textAnchor="end" // Align tilted text correctly
-                      height={100} // Reserve space so chart doesn't cover text
+                      interval={0}
+                      angle={-45}
+                      textAnchor="end"
+                      height={100}
                       tick={{ fontSize: 12, fill: "#666" }}
                     />
-
-                    {/* Y-Axis: Currency Values */}
                     <YAxis
                       type="number"
-                      dataKey="value"
-                      name="Expense"
                       tickFormatter={(val) =>
                         `${currency}${val.toLocaleString()}`
                       }
@@ -455,16 +660,25 @@ export default function Dashboard() {
                       cursor={{ strokeDasharray: "3 3" }}
                       content={<CustomTooltip />}
                     />
-
-                    <Scatter name="Expenses" data={categoryData} fill="#8884d8">
-                      {categoryData.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={COLORS[index % COLORS.length]}
-                        />
-                      ))}
-
-                      {/* Value Labels: Only show if value > 0 to avoid clutter */}
+                    <Line
+                      type="monotone"
+                      dataKey="value"
+                      stroke="#8884d8"
+                      strokeWidth={3}
+                      // Custom Dot to keep your Multi-Color Palette
+                      dot={(props) => {
+                        const { cx, cy, index } = props;
+                        return (
+                          <circle
+                            cx={cx}
+                            cy={cy}
+                            r={6}
+                            fill={COLORS[index % COLORS.length]}
+                            stroke="none"
+                          />
+                        );
+                      }}
+                    >
                       <LabelList
                         dataKey="value"
                         position="top"
@@ -478,8 +692,8 @@ export default function Dashboard() {
                         }}
                         offset={10}
                       />
-                    </Scatter>
-                  </ScatterChart>
+                    </Line>
+                  </LineChart>
                 </ResponsiveContainer>
               </Box>
             ) : (

@@ -27,8 +27,9 @@ import AttachMoneyIcon from "@mui/icons-material/AttachMoney";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
-import FileUploadIcon from "@mui/icons-material/FileUpload"; // New Icon
+import UploadFileIcon from "@mui/icons-material/UploadFile";
 import AddCircleIcon from "@mui/icons-material/AddCircle";
+import FlightIcon from "@mui/icons-material/Flight";
 import * as XLSX from "xlsx";
 import { format } from "date-fns";
 
@@ -243,6 +244,19 @@ export default function Transactions() {
       return { color: "success.main", icon: <TrendingUpIcon />, bg: "#e8f5e9" };
     if (typeName === "Expense")
       return { color: "error.main", icon: <TrendingDownIcon />, bg: "#ffebee" };
+    // Settlement gets a specific Look (Teal/Blue)
+    if (typeName === "Settlement")
+      return {
+        color: "#00695c",
+        icon: <FlightIcon sx={{ transform: "rotate(45deg)" }} />,
+        bg: "#e0f2f1",
+      };
+    if (typeName === "Loan")
+      return {
+        color: "warning.main",
+        icon: <AttachMoneyIcon />,
+        bg: "#fff3e0",
+      };
     return {
       color: "text.secondary",
       icon: <AttachMoneyIcon />,
@@ -275,7 +289,7 @@ export default function Transactions() {
             {/* Import Button */}
             <Button
               variant="outlined"
-              startIcon={<FileUploadIcon />}
+              startIcon={<UploadFileIcon />}
               onClick={handleImportClick}
               size="small"
             >
@@ -462,7 +476,11 @@ export default function Transactions() {
                           fontWeight="bold"
                           sx={{ color: styles.color }}
                         >
-                          {t.category1?.name === "Expense" ? "-" : "+"}
+                          {t.category1?.name === "Income"
+                            ? "+"
+                            : t.category1?.name === "Expense"
+                            ? "-"
+                            : ""}
                           {currency}
                           {t.amount}
                         </Typography>
