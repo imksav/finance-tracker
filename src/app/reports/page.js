@@ -1,0 +1,382 @@
+"use client";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
+import { useCurrency } from "@/lib/CurrencyContext";
+import {
+  Box,
+  Typography,
+  Paper,
+  Grid,
+  TextField,
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Stack,
+  Chip,
+  CircularProgress,
+} from "@mui/material";
+import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
+import SearchIcon from "@mui/icons-material/Search";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { format } from "date-fns";
+
+export default function Reports() {
+  const { currency } = useCurrency();
+  const [loading, setLoading] = useState(false);
+  const [transactions, setTransactions] = useState([]);
+
+  // Default to current month
+  const date = new Date();
+  const firstDay = new Date(date.getFullYear(), date.getMonth(), 1)
+    .toISOString()
+    .split("T")[0];
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0)
+    .toISOString()
+    .split("T")[0];
+
+  const [filters, setFilters] = useState({ start: firstDay, end: lastDay });
+  const [stats, setStats] = useState({ income: 0, expense: 0 });
+
+  useEffect(() => {
+    fetchReport();
+  }, []);
+
+  const fetchReport = async () => {
+    setLoading(true);
+    // Fetch data within range
+    const { data, error } = await supabase
+      .from("transactions")
+      .select(
+        `
+        date, amount, note,
+        category1:categories!category1_id (name),
+        category2:categories!category2_id (name)
+      `
+      )
+      .gte("date", filters.start)
+      .lte("date", filters.end)
+      .order("date", { ascending: false });
+
+    if (error) {
+      alert("Error fetching report");
+    } else {
+      setTransactions(data);
+
+      // Calculate Totals for this period
+      let inc = 0,
+        exp = 0;
+      data.forEach((t) => {
+        if (t.category1?.name === "Income") inc += parseFloat(t.amount);
+        if (t.category1?.name === "Expense") exp += parseFloat(t.amount);
+      });
+      setStats({ income: inc, expense: exp });
+    }
+    setLoading(false);
+  };
+
+  // -------------------------
+  // EXPORT TO EXCEL
+  // -------------------------
+  const exportExcel = () => {
+    const ws = XLSX.utils.json_to_sheet(
+      transactions.map((t) => ({
+        Date: t.date,
+        Type: t.category1?.name,
+        Category: t.category2?.name,
+        Amount: t.amount,
+        Note: t.note,
+      }))
+    );
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Report");
+    XLSX.writeFile(wb, `Report_${filters.start}_to_${filters.end}.xlsx`);
+  };
+
+  // -------------------------
+  // EXPORT TO PDF
+  // -------------------------
+  const exportPDF = () => {
+    const doc = new jsPDF();
+    const totalPagesExp = "{total_pages_count_string}";
+
+    // --- HELPER TO CENTER TEXT ---
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    const centerText = (text, y) => {
+      const textWidth = doc.getTextWidth(text);
+      const x = (pageWidth - textWidth) / 2;
+      doc.text(text, x, y);
+    };
+
+    // 1. Main Header (Bold & Large)
+    doc.setFontSize(18);
+    doc.setTextColor(0, 0, 0); // Black
+    centerText("Financial Transaction Report", 22);
+
+    // 2. Period Range
+    doc.setFontSize(11);
+    doc.setTextColor(0, 0, 0); // Black
+    centerText(`Period: ${filters.start} to ${filters.end}`, 37);
+
+    // 3. Website URL (Smaller)
+    doc.setFontSize(9);
+    doc.setTextColor(100); // Gray
+    centerText("www.finance-tracker.keshavbhandari.com.np", 30);
+
+    // --- SUMMARY SECTION (Left Aligned below header) ---
+    doc.setFontSize(10);
+    doc.setTextColor(0);
+    doc.text(`Total Income: ${currency}${stats.income.toFixed(2)}`, 14, 48);
+    doc.text(`Total Expense: ${currency}${stats.expense.toFixed(2)}`, 80, 48);
+    doc.text(
+      `Net Balance: ${currency}${(stats.income - stats.expense).toFixed(2)}`,
+      150,
+      48
+    );
+
+    // --- TABLE GENERATION ---
+    const tableColumn = ["Date", "Type", "Category", "Note", "Amount"];
+    const tableRows = [];
+
+    transactions.forEach((t) => {
+      const transactionData = [
+        t.date,
+        t.category1?.name,
+        t.category2?.name,
+        t.note,
+        `${currency}${t.amount}`,
+      ];
+      tableRows.push(transactionData);
+    });
+
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 55, // Moved down slightly to fit the new headers
+      theme: "grid",
+      headStyles: { fillColor: [25, 118, 210] },
+      styles: { fontSize: 10 },
+      didDrawPage: function (data) {
+        // Footer Logic (Same as before)
+        let str = "Page " + doc.internal.getNumberOfPages();
+        if (typeof doc.putTotalPages === "function") {
+          str = str + " of " + totalPagesExp;
+        }
+
+        doc.setFontSize(10);
+        doc.setTextColor(150);
+
+        const footerText = "Generated by Finance Tracker";
+        doc.text(
+          footerText,
+          data.settings.margin.left,
+          doc.internal.pageSize.height - 10
+        );
+
+        const timestamp = new Date().toLocaleString();
+        const timestampWidth = doc.getTextWidth(timestamp);
+        doc.text(
+          timestamp,
+          doc.internal.pageSize.width -
+            data.settings.margin.right -
+            timestampWidth,
+          doc.internal.pageSize.height - 10
+        );
+
+        const pageMetrics = doc.getTextWidth(str);
+        doc.text(
+          str,
+          doc.internal.pageSize.width / 2 - pageMetrics / 2,
+          doc.internal.pageSize.height - 10
+        );
+      },
+    });
+
+    if (typeof doc.putTotalPages === "function") {
+      doc.putTotalPages(totalPagesExp);
+    }
+
+    doc.save(`Report_${filters.start}_to_${filters.end}.pdf`);
+  };
+
+  return (
+    <Box>
+      <Typography variant="h4" gutterBottom fontWeight="bold">
+        Reports & Export
+      </Typography>
+
+      {/* 1. Filter Section */}
+      <Paper sx={{ p: 3, mb: 4 }}>
+        <Grid container spacing={2} alignItems="center">
+          <Grid item xs={12} sm={4}>
+            <TextField
+              label="Start Date"
+              type="date"
+              fullWidth
+              InputLabelProps={{ shrink: true }}
+              value={filters.start}
+              onChange={(e) =>
+                setFilters({ ...filters, start: e.target.value })
+              }
+            />
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <TextField
+              label="End Date"
+              type="date"
+              fullWidth
+              InputLabelProps={{ shrink: true }}
+              value={filters.end}
+              onChange={(e) => setFilters({ ...filters, end: e.target.value })}
+            />
+          </Grid>
+          <Grid item xs={12} sm={4}>
+            <Button
+              variant="contained"
+              size="large"
+              fullWidth
+              startIcon={<SearchIcon />}
+              onClick={fetchReport}
+              disabled={loading}
+            >
+              {loading ? "Generating..." : "Generate Report"}
+            </Button>
+          </Grid>
+        </Grid>
+      </Paper>
+
+      {/* 2. Summary & Actions */}
+      {transactions.length > 0 && (
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          spacing={2}
+          justifyContent="space-between"
+          alignItems="center"
+          mb={3}
+        >
+          {/* Stats Chips */}
+          <Stack direction="row" spacing={1}>
+            <Chip
+              label={`Income: ${currency} ${stats.income.toFixed(2)}`}
+              color="success"
+              variant="outlined"
+            />
+            <Chip
+              label={`Expense: ${currency} ${stats.expense.toFixed(2)}`}
+              color="error"
+              variant="outlined"
+            />
+            <Chip
+              label={`Net: ${currency} ${(stats.income - stats.expense).toFixed(
+                2
+              )}`}
+              color="primary"
+            />
+          </Stack>
+
+          {/* Export Buttons */}
+          <Stack direction="row" spacing={2}>
+            <Button
+              variant="outlined"
+              color="success"
+              startIcon={<FileDownloadIcon />}
+              onClick={exportExcel}
+            >
+              Excel
+            </Button>
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<PictureAsPdfIcon />}
+              onClick={exportPDF}
+            >
+              PDF
+            </Button>
+          </Stack>
+        </Stack>
+      )}
+
+      {/* 3. Data Table */}
+      <TableContainer component={Paper} elevation={2}>
+        <Table>
+          <TableHead sx={{ bgcolor: "#f5f5f5" }}>
+            <TableRow>
+              <TableCell>
+                <strong>Date</strong>
+              </TableCell>
+              <TableCell>
+                <strong>Type</strong>
+              </TableCell>
+              <TableCell>
+                <strong>Category</strong>
+              </TableCell>
+              <TableCell>
+                <strong>Note</strong>
+              </TableCell>
+              <TableCell align="right">
+                <strong>Amount</strong>
+              </TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={5} align="center">
+                  <CircularProgress />
+                </TableCell>
+              </TableRow>
+            ) : transactions.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} align="center">
+                  No records found for this period.
+                </TableCell>
+              </TableRow>
+            ) : (
+              transactions.map((t, index) => (
+                <TableRow key={index} hover>
+                  <TableCell>
+                    {format(new Date(t.date), "MMM dd, yyyy")}
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={t.category1?.name}
+                      size="small"
+                      color={
+                        t.category1?.name === "Income"
+                          ? "success"
+                          : t.category1?.name === "Expense"
+                          ? "error"
+                          : "default"
+                      }
+                    />
+                  </TableCell>
+                  <TableCell>{t.category2?.name}</TableCell>
+                  <TableCell
+                    sx={{
+                      maxWidth: 200,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {t.note}
+                  </TableCell>
+                  <TableCell align="right" sx={{ fontWeight: "bold" }}>
+                    {currency} {t.amount}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
+  );
+}
